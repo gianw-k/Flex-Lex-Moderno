@@ -24,10 +24,17 @@ std::string Element::describe() const {
 
 std::string Piece::describe() const {
     if (kind == SINGLE) return element.describe();
-    std::string s = element.describe();
-    if (s.empty() || s[0] != '(') s = "(" + s + ")";
-    s += zeroOrMore ? "*" : "+";
-    return s;
+    std::string inner = element.describe();
+    // Element::describe() ya pone parentesis cuando hay mas de una
+    // alternativa (OR). Si es una sola, aqui se agregan, para que el
+    // "*"/"+" de la repeticion siempre quede claramente sobre TODO el
+    // simbolo que se repite, no pegado al ultimo caracter visible.
+    bool yaTieneParentesis = element.alternatives.size() > 1;
+    if (!yaTieneParentesis) {
+        inner = "(" + inner + ")";
+    }
+    inner += zeroOrMore ? "*" : "+";
+    return inner;
 }
 
 std::string TokenDef::describe() const {

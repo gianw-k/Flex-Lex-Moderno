@@ -37,6 +37,8 @@ private:
     QPushButton* btnRepeticion;
     QPushButton* btnOr;
     QPushButton* btnPalabraClave;
+    QPushButton* btnCerrarRepeticion;
+    QPushButton* btnDeshacerPieza;
 
     // widgets de la pantalla de tokens / prueba
     QListWidget* listaDefiniciones;
@@ -73,9 +75,9 @@ private:
                              const std::string& nombre = "");
     void iniciarRepeticion(bool ceroOMas);
     void cerrarRepeticion();
+    void deshacerUltimaPieza();
     void finalizarToken();
-    void plantillaIdentificador();
-    void plantillaFlotante();
+    QString sugerirNombrePorDefecto() const;
     void refrescarListaTokens();
     void escanear();
     void generarCodigo();
@@ -83,6 +85,7 @@ private:
 
     void irA(Pagina p);
     void volver();
+    bool confirmarSalirSiHayProgreso();
 
     bool nombreDisponible(const std::string& nombre);
 };
