@@ -25,6 +25,7 @@ std::string Element::describe() const {
 std::string Piece::describe() const {
     if (kind == SINGLE) return element.describe();
     std::string s = element.describe();
+    if (s.empty() || s[0] != '(') s = "(" + s + ")";
     s += zeroOrMore ? "*" : "+";
     return s;
 }

@@ -9,6 +9,7 @@
 #include <QTextEdit>
 #include <vector>
 #include "piece.h"
+#include "generador.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -23,6 +24,7 @@ private:
         P_REPETICION,
         P_KEYWORD,
         P_TOKENS,
+        P_CODIGO,
         P_AYUDA
     };
 
@@ -41,6 +43,11 @@ private:
     QTableWidget* tablaTokens;
     QTextEdit* txtCodigoFuente;
 
+    // widgets de la pantalla de codigo generado
+    QTextEdit* txtCodigoGenerado;
+    QLabel* lblInfoDfa;
+    std::string codigoGenerado;
+
     // estado del token que se esta construyendo
     std::vector<Piece> currentPieces;
     Element currentElement;
@@ -56,6 +63,7 @@ private:
     QWidget* crearPaginaRepeticion();
     QWidget* crearPaginaKeyword();
     QWidget* crearPaginaTokens();
+    QWidget* crearPaginaCodigo();
     QWidget* crearPaginaAyuda();
 
     void refrescarPantallaPieza();
@@ -70,6 +78,8 @@ private:
     void plantillaFlotante();
     void refrescarListaTokens();
     void escanear();
+    void generarCodigo();
+    void guardarCodigo();
 
     void irA(Pagina p);
     void volver();

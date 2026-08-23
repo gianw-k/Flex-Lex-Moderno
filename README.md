@@ -26,15 +26,36 @@ cmake --build .
   Aqui vive la representacion de "que es un token" armado desde el GUI.
 - `token.h` - clase Token (resultado de escanear), simplificada como valor
   (sin `new`/`delete` como en el Scanner original de clase).
-- `scanner.h` / `scanner.cpp` - el motor: recibe la lista de TokenDef y reconoce
-  tokens con maximal munch, igual que hace FLEX.
-- `mainwindow.h` / `mainwindow.cpp` - toda la interfaz Qt: las 7 pantallas
+- `generador.h` / `generador.cpp` - el motor: convierte los TokenDef en un NFA
+  (Thompson), lo determiniza (subconjuntos) y emite el `lexer.cpp`. El mismo
+  DFA se usa para la vista previa dentro de la app.
+- `mainwindow.h` / `mainwindow.cpp` - toda la interfaz Qt: las 8 pantallas
   (inicio, seleccion de pieza, elemento, repeticion, palabra clave, lista de
-  tokens + prueba, ayuda) y la logica de navegacion.
+  tokens + prueba, codigo generado, ayuda) y la logica de navegacion.
 - `main.cpp` - punto de entrada.
-- `test_scanner.cpp` - prueba de linea de comandos del motor, sin necesidad de
-  abrir el GUI (util para depurar la logica del automata por separado).
-  Se compila aparte: `g++ -std=c++17 -o test test_scanner.cpp piece.cpp scanner.cpp`
+- `test_generador.cpp` - prueba de linea de comandos del motor, sin necesidad
+  de abrir el GUI. Se compila aparte:
+  `g++ -std=c++17 -o test test_generador.cpp generador.cpp piece.cpp`
+
+## Como usar el codigo generado
+
+Definir los tokens con los botones, ir a "Ver tokens", pulsar **Generar codigo
+C++** y despues **Guardar como lexer.cpp**. Entonces:
+
+```bash
+g++ -std=c++17 lexer.cpp -o lexer
+echo 'if iff x1 == 3.14' | ./lexer
+```
+
+Imprime una linea por token, con el nombre y el lexema.
+
+## De la expresion regular al C++
+
+| Paso | Donde |
+|---|---|
+| 1. Estructura -> NFA (Thompson) | `generador.cpp`: `construirElemento`, `construirPieza`, `construirNfa` |
+| 2. NFA -> DFA (subconjuntos) | `generador.cpp`: `construirDfa` |
+| 3. DFA -> C++ | `generador.cpp`: `generarCpp` |
 
 ## Que decisiones de diseno tomamos (para tu exposicion)
 
@@ -44,9 +65,13 @@ cmake --build .
   de FLEX.
 - Cada pieza es una `Element` (una o mas alternativas unidas por OR) opcionalmente
   envuelta en una repeticion 0-o-mas / 1-o-mas.
-- El escaneo usa "maximal munch": en cada posicion se prueban TODAS las
-  definiciones y se toma la mas larga; si el lexema resultante coincide exacto
-  con una palabra clave, esta gana (igual que "if" le gana a ID en FLEX).
+- Se construye UN solo automata con todas las reglas, no uno por token. Las
+  palabras clave no se tratan aparte: entran al mismo DFA que los patrones.
+- La prioridad es el orden de la lista: si un estado acepta por varias reglas
+  gana la de mas arriba. Por eso "if" le gana a ID, igual que en FLEX.
+- El escaneo usa "maximal munch": el motor recuerda el ultimo estado de
+  aceptacion y retrocede hasta el, asi "3.14" sale como un FLOAT y no como
+  tres tokens.
 - Limitacion consciente: no se pueden alternar dos secuencias completas ya
   formadas (solo piezas individuales dentro de un elemento), y no hay soporte
   para cadenas de texto ("...") porque necesitarian una clase de caracter

@@ -1,5 +1,5 @@
 #include "mainwindow.h"
-#include "scanner.h"
+#include "generador.h"
 
 #include <QApplication>
 #include <QVBoxLayout>
@@ -10,6 +10,8 @@
 #include <QInputDialog>
 #include <QHeaderView>
 #include <QFont>
+#include <QFileDialog>
+#include <QTextStream>
 
 // ---------------------------------------------------------------
 // Construccion de la ventana
@@ -28,6 +30,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     stack->addWidget(crearPaginaRepeticion());  // P_REPETICION
     stack->addWidget(crearPaginaKeyword());    // P_KEYWORD
     stack->addWidget(crearPaginaTokens());     // P_TOKENS
+    stack->addWidget(crearPaginaCodigo());     // P_CODIGO
     stack->addWidget(crearPaginaAyuda());      // P_AYUDA
 
     stack->setCurrentIndex(P_INICIO);
@@ -51,6 +54,9 @@ void MainWindow::volver() {
             } else {
                 irA(P_INICIO);
             }
+            break;
+        case P_CODIGO:
+            irA(P_TOKENS);
             break;
         case P_ELEMENTO:
         case P_KEYWORD:
@@ -571,9 +577,15 @@ QWidget* MainWindow::crearPaginaTokens() {
     txtCodigoFuente->setMaximumHeight(80);
     layout->addWidget(txtCodigoFuente);
 
+    QHBoxLayout* acciones = new QHBoxLayout;
     QPushButton* btnEscanear = new QPushButton("Escanear");
     connect(btnEscanear, &QPushButton::clicked, this, &MainWindow::escanear);
-    layout->addWidget(btnEscanear);
+    acciones->addWidget(btnEscanear);
+
+    QPushButton* btnGenerar = new QPushButton("Generar codigo C++");
+    connect(btnGenerar, &QPushButton::clicked, this, &MainWindow::generarCodigo);
+    acciones->addWidget(btnGenerar);
+    layout->addLayout(acciones);
 
     tablaTokens = new QTableWidget(0, 3);
     tablaTokens->setHorizontalHeaderLabels({"Lexema", "Tipo", "Estado"});
@@ -595,12 +607,17 @@ void MainWindow::refrescarListaTokens() {
 }
 
 void MainWindow::escanear() {
+    if (tokenDefs.empty()) {
+        QMessageBox::information(this, "Escanear", "Primero define al menos un token.");
+        return;
+    }
+
     std::string codigo = txtCodigoFuente->toPlainText().toStdString();
-    Scanner sc(codigo, tokenDefs);
+    Dfa dfa = construirDfa(tokenDefs);
     tablaTokens->setRowCount(0);
 
-    Token t = sc.nextToken();
-    while (t.kind != Token::Kind::END) {
+    for (const Token& t : escanearConDfa(tokenDefs, dfa, codigo)) {
+        if (t.kind == Token::Kind::END) break;
         int row = tablaTokens->rowCount();
         tablaTokens->insertRow(row);
         tablaTokens->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(t.lexeme)));
@@ -611,13 +628,89 @@ void MainWindow::escanear() {
             tablaTokens->setItem(row, 1, new QTableWidgetItem(QString::fromStdString(t.tokenName)));
             tablaTokens->setItem(row, 2, new QTableWidgetItem("OK"));
         }
-        t = sc.nextToken();
     }
 }
 
 // ---------------------------------------------------------------
 // Pantalla: ayuda
 // ---------------------------------------------------------------
+
+// ---------------------------------------------------------------
+// Pantalla: codigo C++ generado
+// ---------------------------------------------------------------
+
+QWidget* MainWindow::crearPaginaCodigo() {
+    QWidget* page = new QWidget;
+    QVBoxLayout* layout = new QVBoxLayout(page);
+
+    QHBoxLayout* topBar = new QHBoxLayout;
+    QPushButton* btnAtras = new QPushButton("<-");
+    connect(btnAtras, &QPushButton::clicked, this, &MainWindow::volver);
+    topBar->addWidget(btnAtras);
+    topBar->addWidget(new QLabel("Codigo C++ generado"), 1);
+    layout->addLayout(topBar);
+
+    lblInfoDfa = new QLabel;
+    layout->addWidget(lblInfoDfa);
+
+    txtCodigoGenerado = new QTextEdit;
+    txtCodigoGenerado->setReadOnly(true);
+    txtCodigoGenerado->setLineWrapMode(QTextEdit::NoWrap);
+    QFont mono("monospace");
+    mono.setStyleHint(QFont::TypeWriter);
+    mono.setPointSize(9);
+    txtCodigoGenerado->setFont(mono);
+    layout->addWidget(txtCodigoGenerado, 1);
+
+    QPushButton* btnGuardar = new QPushButton("Guardar como lexer.cpp");
+    connect(btnGuardar, &QPushButton::clicked, this, &MainWindow::guardarCodigo);
+    layout->addWidget(btnGuardar);
+
+    return page;
+}
+
+void MainWindow::generarCodigo() {
+    if (tokenDefs.empty()) {
+        QMessageBox::information(this, "Generar", "Primero define al menos un token.");
+        return;
+    }
+
+    Dfa dfa = construirDfa(tokenDefs);
+    codigoGenerado = generarCpp(tokenDefs, dfa);
+
+    QString info = QString("NFA de %1 estados  ->  DFA de %2 estados")
+                       .arg(dfa.estadosNfa)
+                       .arg(static_cast<int>(dfa.tabla.size()));
+    for (const std::string& a : dfa.avisos)
+        info += QString("\nAVISO: la regla %1 reconoce la cadena vacia")
+                    .arg(QString::fromStdString(a));
+    lblInfoDfa->setText(info);
+
+    txtCodigoGenerado->setPlainText(QString::fromStdString(codigoGenerado));
+    irA(P_CODIGO);
+}
+
+void MainWindow::guardarCodigo() {
+    if (codigoGenerado.empty()) return;
+
+    QString ruta = QFileDialog::getSaveFileName(this, "Guardar el analizador generado",
+                                                "lexer.cpp", "Codigo C++ (*.cpp)");
+    if (ruta.isEmpty()) return;
+
+    QFile f(ruta);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, "Guardar", "No se pudo escribir el archivo.");
+        return;
+    }
+    QTextStream out(&f);
+    out << QString::fromStdString(codigoGenerado);
+    f.close();
+
+    QMessageBox::information(this, "Guardar",
+        "Guardado.\n\nPara probarlo:\n"
+        "  g++ -std=c++17 lexer.cpp -o lexer\n"
+        "  ./lexer < prueba.txt");
+}
 
 QWidget* MainWindow::crearPaginaAyuda() {
     QWidget* page = new QWidget;
@@ -640,7 +733,13 @@ QWidget* MainWindow::crearPaginaAyuda() {
         "5. Las plantillas arman Identificador o Punto flotante automaticamente.\n\n"
         "6. Finalizar token guarda la secuencia armada con el nombre que elijas.\n\n"
         "7. En 'Ver tokens' puedes escribir codigo de prueba y presionar Escanear "
-        "para ver los tokens reconocidos.");
+        "para ver los tokens reconocidos.\n\n"
+        "8. El orden de la lista es la prioridad: si dos reglas reconocen el mismo "
+        "lexema gana la de arriba. Por eso las palabras clave se definen primero.\n\n"
+        "9. 'Generar codigo C++' compila los tokens a un automata y produce un "
+        "lexer.cpp autocontenido. Para probarlo:\n"
+        "     g++ -std=c++17 lexer.cpp -o lexer\n"
+        "     ./lexer < prueba.txt");
     texto->setWordWrap(true);
     layout->addWidget(texto);
     layout->addStretch();

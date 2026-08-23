@@ -18,8 +18,8 @@ add_executable(LexerGUI
     mainwindow.h
     piece.cpp
     piece.h
-    scanner.cpp
-    scanner.h
+    generador.cpp
+    generador.h
     token.h
 )
 
