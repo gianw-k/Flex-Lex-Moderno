@@ -1,0 +1,78 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "LexerGUI",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "LexerGUI::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-LexerGUI-Debug-4125757a1ed30b725ece.json",
+					"name" : "LexerGUI",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "LexerGUI_autogen::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-LexerGUI_autogen-Debug-d510300fd9e1776e74e5.json",
+					"name" : "LexerGUI_autogen",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "LexerGUI_autogen_timestamp_deps::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-LexerGUI_autogen_timestamp_deps-Debug-f6dc188580845945fd4f.json",
+					"name" : "LexerGUI_autogen_timestamp_deps",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/Patrick/Desktop/Clases 2026-II/Compiladores/Semana 2/Proyecto Flex/lexer_gui (Ultima version)/build/Desktop_Qt_6_11_2_MinGW_64_bit_Debug",
+		"source" : "C:/Users/Patrick/Desktop/Clases 2026-II/Compiladores/Semana 2/Proyecto Flex/lexer_gui (Ultima version)"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

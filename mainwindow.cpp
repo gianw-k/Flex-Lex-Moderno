@@ -10,6 +10,10 @@
 #include <QInputDialog>
 #include <QHeaderView>
 #include <QFont>
+#include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
 
 // ---------------------------------------------------------------
 // Construccion de la ventana
@@ -47,12 +51,22 @@ void MainWindow::volver() {
     switch (stack->currentIndex()) {
         case P_PIEZA:
             if (buildingRepetition) {
-                cerrarRepeticion();
+                // <- cancela la repeticion en progreso, no la confirma.
+                // Para confirmarla y seguir agregando piezas, se usa el
+                // boton "Cerrar repeticion y continuar".
+                hasCurrentElement = false;
+                currentElement = Element();
+                buildingRepetition = false;
+                refrescarPantallaPieza();
             } else {
-                irA(P_INICIO);
+                if (confirmarSalirSiHayProgreso()) {
+                    irA(P_INICIO);
+                }
+                // si no se confirma, nos quedamos en P_PIEZA tal cual
             }
             break;
         case P_ELEMENTO:
+        case P_REPETICION:
         case P_KEYWORD:
         case P_TOKENS:
         case P_AYUDA:
@@ -68,6 +82,38 @@ bool MainWindow::nombreDisponible(const std::string& nombre) {
         if (d.name == nombre) return false;
     }
     return true;
+}
+
+// Se llama antes de cualquier salida "grande" (volver a Inicio, o cerrar el
+// programa). Si no hay nada que perder, deja pasar directo. Si hay tokens ya
+// guardados o una pieza a medio armar, pregunta y, si el usuario confirma
+// salir, borra todo (el analizador que se estaba armando nunca llega a
+// existir). Devuelve true si se debe proceder con la salida.
+bool MainWindow::confirmarSalirSiHayProgreso() {
+    bool hayProgreso = !tokenDefs.empty() || !currentPieces.empty() || hasCurrentElement;
+    if (!hayProgreso) return true;
+
+    QMessageBox caja(this);
+    caja.setIcon(QMessageBox::Warning);
+    caja.setWindowTitle("Analizador sin terminar");
+    caja.setText("Todavia no terminaste de crear el analizador lexico.\n\n"
+                  "Si sales ahora se van a borrar todos los tokens que ya "
+                  "definiste, y el analizador nunca llega a crearse.");
+    QPushButton* btnSalir = caja.addButton("Salir y borrar todo", QMessageBox::DestructiveRole);
+    btnSalir->setStyleSheet("background-color:#b33939; color:white; font-weight:bold;");
+    QPushButton* btnContinuar = caja.addButton("Continuar creando", QMessageBox::RejectRole);
+    caja.setDefaultButton(btnContinuar);
+    caja.exec();
+
+    if (caja.clickedButton() == btnSalir) {
+        tokenDefs.clear();
+        currentPieces.clear();
+        hasCurrentElement = false;
+        currentElement = Element();
+        buildingRepetition = false;
+        return true;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------
@@ -95,7 +141,9 @@ QWidget* MainWindow::crearPaginaInicio() {
     btnSalir->setFixedHeight(42);
 
     connect(btnComenzar, &QPushButton::clicked, this, [this]() { irA(P_PIEZA); });
-    connect(btnSalir, &QPushButton::clicked, this, []() { QApplication::quit(); });
+    connect(btnSalir, &QPushButton::clicked, this, [this]() {
+        if (confirmarSalirSiHayProgreso()) QApplication::quit();
+    });
 
     QVBoxLayout* botones = new QVBoxLayout;
     botones->addWidget(btnComenzar);
@@ -184,11 +232,21 @@ QWidget* MainWindow::crearPaginaPieza() {
     btnPalabraClave = new QPushButton("Palabra clave");
     connect(btnPalabraClave, &QPushButton::clicked, this, [this]() { irA(P_KEYWORD); });
 
-    QPushButton* btnPlantillaId = new QPushButton("Plantilla: Identificador");
-    connect(btnPlantillaId, &QPushButton::clicked, this, &MainWindow::plantillaIdentificador);
+    btnCerrarRepeticion = new QPushButton("Cerrar repeticion y continuar");
+    btnCerrarRepeticion->setStyleSheet("background-color: #2d5f8a;");
+    connect(btnCerrarRepeticion, &QPushButton::clicked, this, &MainWindow::cerrarRepeticion);
 
-    QPushButton* btnPlantillaFloat = new QPushButton("Plantilla: Punto flotante");
-    connect(btnPlantillaFloat, &QPushButton::clicked, this, &MainWindow::plantillaFlotante);
+    btnDeshacerPieza = new QPushButton("<- Deshacer ultima pieza");
+    connect(btnDeshacerPieza, &QPushButton::clicked, this, &MainWindow::deshacerUltimaPieza);
+
+    // btnDeshacerPieza vive a la izquierda y solo aparece si ya hay piezas
+    // agregadas; btnCerrarRepeticion vive a la derecha y solo aparece en
+    // modo repeticion. El stretch del medio evita que cualquiera de los
+    // dos se estire y ocupe todo el ancho.
+    QHBoxLayout* filaAccionSecundaria = new QHBoxLayout;
+    filaAccionSecundaria->addWidget(btnDeshacerPieza);
+    filaAccionSecundaria->addStretch();
+    filaAccionSecundaria->addWidget(btnCerrarRepeticion);
 
     QPushButton* btnFinalizar = new QPushButton("Finalizar token");
     btnFinalizar->setStyleSheet("font-weight: bold;");
@@ -198,8 +256,7 @@ QWidget* MainWindow::crearPaginaPieza() {
     grid->addWidget(btnRepeticion, 0, 1);
     grid->addWidget(btnOr, 1, 0);
     grid->addWidget(btnPalabraClave, 1, 1);
-    grid->addWidget(btnPlantillaId, 2, 0);
-    grid->addWidget(btnPlantillaFloat, 2, 1);
+    grid->addLayout(filaAccionSecundaria, 2, 0, 1, 2);
     grid->addWidget(btnFinalizar, 3, 0, 1, 2);
 
     outer->addLayout(grid);
@@ -208,17 +265,21 @@ QWidget* MainWindow::crearPaginaPieza() {
 
 void MainWindow::refrescarPantallaPieza() {
     if (buildingRepetition) {
-        lblHeaderPieza->setText(QString("Construyendo el contenido de la repeticion (%1) - use <- para terminar")
+        lblHeaderPieza->setText(QString("Construyendo el contenido de la repeticion (%1) - agrega elementos "
+                                         "y presiona 'Cerrar repeticion' para seguir, o <- para cancelarla")
                                      .arg(repetitionZeroOrMore ? "0 o mas" : "1 o mas"));
         btnRepeticion->setVisible(false);
         btnPalabraClave->setVisible(false);
         btnElementoUnico->setVisible(!hasCurrentElement);
+        btnCerrarRepeticion->setVisible(true);
     } else {
         lblHeaderPieza->setText("Ingrese un tipo de token");
         btnRepeticion->setVisible(true);
         btnElementoUnico->setVisible(true);
         btnPalabraClave->setVisible(currentPieces.empty() && !hasCurrentElement);
+        btnCerrarRepeticion->setVisible(false);
     }
+    btnDeshacerPieza->setVisible(hasCurrentElement || !currentPieces.empty());
     btnOr->setEnabled(hasCurrentElement);
 
     QString preview;
@@ -383,6 +444,19 @@ void MainWindow::cerrarRepeticion() {
     irA(P_PIEZA);
 }
 
+void MainWindow::deshacerUltimaPieza() {
+    if (hasCurrentElement) {
+        // Habia un elemento (posiblemente con OR) pendiente de confirmar
+        // todavia -- es, para el usuario, "la ultima pieza agregada" aunque
+        // no este en currentPieces todavia. Se descarta completo.
+        hasCurrentElement = false;
+        currentElement = Element();
+    } else if (!currentPieces.empty()) {
+        currentPieces.pop_back();
+    }
+    refrescarPantallaPieza();
+}
+
 // ---------------------------------------------------------------
 // Pantalla: palabra clave
 // ---------------------------------------------------------------
@@ -432,14 +506,43 @@ QWidget* MainWindow::crearPaginaKeyword() {
 }
 
 // ---------------------------------------------------------------
-// Finalizar token / plantillas
+// Finalizar token
 // ---------------------------------------------------------------
 
+// Si el token que se esta por finalizar es exactamente UN simbolo solo
+// (sin repeticion, sin OR con otra cosa), sugiere su nombre amigable como
+// nombre por defecto, igual que ya se hace con las palabras clave.
+QString MainWindow::sugerirNombrePorDefecto() const {
+    if (currentPieces.size() == 1) {
+        const Piece& p = currentPieces[0];
+        if (p.kind == Piece::SINGLE && p.element.alternatives.size() == 1) {
+            const Alternative& a = p.element.alternatives[0];
+            if (a.kind == Alternative::SYMBOL && !a.symbolName.empty()) {
+                QString nombre = QString::fromStdString(a.symbolName).toUpper();
+                nombre.replace(' ', '_');
+                return nombre;
+            }
+        }
+    }
+    return "";
+}
+
 void MainWindow::finalizarToken() {
-    confirmarElementoPendiente();
     if (buildingRepetition) {
-        QMessageBox::warning(this, "Repeticion abierta", "Cierra la repeticion (<-) antes de finalizar.");
-        return;
+        // Si habia una repeticion sin cerrar, se cierra automaticamente
+        // con lo que se alcanzo a elegir (si no se eligio nada, se descarta).
+        if (hasCurrentElement) {
+            Piece p;
+            p.kind = Piece::REPETITION;
+            p.element = currentElement;
+            p.zeroOrMore = repetitionZeroOrMore;
+            currentPieces.push_back(p);
+        }
+        hasCurrentElement = false;
+        currentElement = Element();
+        buildingRepetition = false;
+    } else {
+        confirmarElementoPendiente();
     }
     if (currentPieces.empty()) {
         QMessageBox::warning(this, "Token vacio", "Agrega al menos una pieza antes de finalizar.");
@@ -447,7 +550,7 @@ void MainWindow::finalizarToken() {
     }
     bool ok;
     QString nombre = QInputDialog::getText(this, "Nombre del token", "Nombre para este token:",
-                                            QLineEdit::Normal, "", &ok);
+                                            QLineEdit::Normal, sugerirNombrePorDefecto(), &ok);
     if (!ok || nombre.trimmed().isEmpty()) return;
     if (!nombreDisponible(nombre.toStdString())) {
         QMessageBox::warning(this, "Nombre repetido", "Ya existe un token con ese nombre.");
@@ -463,86 +566,6 @@ void MainWindow::finalizarToken() {
     hasCurrentElement = false;
     currentElement = Element();
     QMessageBox::information(this, "Token guardado", "Token '" + nombre + "' guardado.");
-    refrescarPantallaPieza();
-}
-
-void MainWindow::plantillaIdentificador() {
-    currentPieces.clear();
-    hasCurrentElement = false;
-    buildingRepetition = false;
-
-    Piece p1;
-    p1.kind = Piece::SINGLE;
-    Alternative a1; a1.kind = Alternative::UPPERCASE;
-    Alternative a2; a2.kind = Alternative::LOWERCASE;
-    p1.element.alternatives = {a1, a2};
-    currentPieces.push_back(p1);
-
-    Piece p2;
-    p2.kind = Piece::REPETITION;
-    p2.zeroOrMore = true;
-    Alternative b1; b1.kind = Alternative::UPPERCASE;
-    Alternative b2; b2.kind = Alternative::LOWERCASE;
-    Alternative b3; b3.kind = Alternative::DIGIT;
-    p2.element.alternatives = {b1, b2, b3};
-    currentPieces.push_back(p2);
-
-    bool ok;
-    QString nombre = QInputDialog::getText(this, "Nombre del token", "Nombre:",
-                                            QLineEdit::Normal, "ID", &ok);
-    if (!ok || nombre.trimmed().isEmpty() || !nombreDisponible(nombre.toStdString())) {
-        if (ok && !nombreDisponible(nombre.toStdString()))
-            QMessageBox::warning(this, "Nombre repetido", "Ya existe un token con ese nombre.");
-        currentPieces.clear();
-        return;
-    }
-    TokenDef def;
-    def.name = nombre.toStdString();
-    def.pieces = currentPieces;
-    tokenDefs.push_back(def);
-    currentPieces.clear();
-    refrescarPantallaPieza();
-}
-
-void MainWindow::plantillaFlotante() {
-    currentPieces.clear();
-    hasCurrentElement = false;
-    buildingRepetition = false;
-
-    Piece p1;
-    p1.kind = Piece::REPETITION;
-    p1.zeroOrMore = false;
-    Alternative d1; d1.kind = Alternative::DIGIT;
-    p1.element.alternatives = {d1};
-    currentPieces.push_back(p1);
-
-    Piece p2;
-    p2.kind = Piece::SINGLE;
-    Alternative punto; punto.kind = Alternative::SYMBOL; punto.symbolLiteral = "."; punto.symbolName = "punto";
-    p2.element.alternatives = {punto};
-    currentPieces.push_back(p2);
-
-    Piece p3;
-    p3.kind = Piece::REPETITION;
-    p3.zeroOrMore = false;
-    Alternative d2; d2.kind = Alternative::DIGIT;
-    p3.element.alternatives = {d2};
-    currentPieces.push_back(p3);
-
-    bool ok;
-    QString nombre = QInputDialog::getText(this, "Nombre del token", "Nombre:",
-                                            QLineEdit::Normal, "FLOAT", &ok);
-    if (!ok || nombre.trimmed().isEmpty() || !nombreDisponible(nombre.toStdString())) {
-        if (ok && !nombreDisponible(nombre.toStdString()))
-            QMessageBox::warning(this, "Nombre repetido", "Ya existe un token con ese nombre.");
-        currentPieces.clear();
-        return;
-    }
-    TokenDef def;
-    def.name = nombre.toStdString();
-    def.pieces = currentPieces;
-    tokenDefs.push_back(def);
-    currentPieces.clear();
     refrescarPantallaPieza();
 }
 
@@ -571,9 +594,15 @@ QWidget* MainWindow::crearPaginaTokens() {
     txtCodigoFuente->setMaximumHeight(80);
     layout->addWidget(txtCodigoFuente);
 
-    QPushButton* btnEscanear = new QPushButton("Escanear");
+    QHBoxLayout* filaBotones = new QHBoxLayout;
+    QPushButton* btnEscanear = new QPushButton("Escanear (probar aqui)");
     connect(btnEscanear, &QPushButton::clicked, this, &MainWindow::escanear);
-    layout->addWidget(btnEscanear);
+    QPushButton* btnGenerar = new QPushButton("Generar codigo C++");
+    btnGenerar->setStyleSheet("font-weight: bold;");
+    connect(btnGenerar, &QPushButton::clicked, this, &MainWindow::generarCodigo);
+    filaBotones->addWidget(btnEscanear);
+    filaBotones->addWidget(btnGenerar);
+    layout->addLayout(filaBotones);
 
     tablaTokens = new QTableWidget(0, 3);
     tablaTokens->setHorizontalHeaderLabels({"Lexema", "Tipo", "Estado"});
@@ -635,14 +664,271 @@ QWidget* MainWindow::crearPaginaAyuda() {
         "digitos o un simbolo.\n\n"
         "2. OR combina la pieza mas reciente con otra opcion (ej. mayusculas o minusculas).\n\n"
         "3. Repeticion envuelve un elemento para que se repita 0-o-mas o 1-o-mas veces. "
-        "No se puede meter una repeticion dentro de otra.\n\n"
-        "4. Palabra clave agrega texto literal exacto (solo si el token todavia esta vacio).\n\n"
-        "5. Las plantillas arman Identificador o Punto flotante automaticamente.\n\n"
-        "6. Finalizar token guarda la secuencia armada con el nombre que elijas.\n\n"
+        "Dentro de una repeticion solo puedes usar Elemento unico y OR (no se puede "
+        "anidar otra repeticion ni una palabra clave).\n\n"
+        "4. Dentro de una repeticion, 'Cerrar repeticion y continuar' guarda lo que "
+        "armaste y te deja seguir agregando mas piezas al token (por ejemplo, para "
+        "hacer un punto flotante: repeticion de digitos, cerrar, simbolo '.', "
+        "otra repeticion de digitos). El boton <- en cambio CANCELA la repeticion "
+        "sin guardar nada.\n\n"
+        "5. Palabra clave agrega texto literal exacto (solo si el token todavia esta vacio).\n\n"
+        "6. Finalizar token guarda la secuencia armada con el nombre que elijas. Si "
+        "dejaste una repeticion sin cerrar, se cierra sola con lo que alcanzaste a elegir.\n\n"
         "7. En 'Ver tokens' puedes escribir codigo de prueba y presionar Escanear "
-        "para ver los tokens reconocidos.");
+        "para ver los tokens reconocidos, o generar el codigo C++ del analizador.");
     texto->setWordWrap(true);
     layout->addWidget(texto);
     layout->addStretch();
     return page;
+}
+
+// ---------------------------------------------------------------
+// Generacion de codigo C++ independiente (sin Qt)
+// ---------------------------------------------------------------
+
+static QString escaparCpp(const std::string& s) {
+    QString r;
+    for (unsigned char c : s) {
+        switch (c) {
+            case '\\': r += "\\\\"; break;
+            case '"':  r += "\\\""; break;
+            case '\n': r += "\\n"; break;
+            case '\t': r += "\\t"; break;
+            default:   r += QChar(c);
+        }
+    }
+    return r;
+}
+
+static QString cppParaAlternativa(const Alternative& a) {
+    QString kindStr;
+    switch (a.kind) {
+        case Alternative::UPPERCASE: kindStr = "Alternative::UPPERCASE"; break;
+        case Alternative::LOWERCASE: kindStr = "Alternative::LOWERCASE"; break;
+        case Alternative::DIGIT:     kindStr = "Alternative::DIGIT"; break;
+        case Alternative::SYMBOL:    kindStr = "Alternative::SYMBOL"; break;
+    }
+    return QString("Alternative{%1, \"%2\", \"%3\"}")
+        .arg(kindStr, escaparCpp(a.symbolLiteral), escaparCpp(a.symbolName));
+}
+
+QString MainWindow::generarBloqueTokenDef(const TokenDef& def) const {
+    QString out;
+    out += "    {\n        TokenDef def;\n";
+    out += QString("        def.name = \"%1\";\n").arg(escaparCpp(def.name));
+    if (def.isKeyword) {
+        out += "        def.isKeyword = true;\n";
+        out += QString("        def.keywordLiteral = \"%1\";\n").arg(escaparCpp(def.keywordLiteral));
+    } else {
+        for (const auto& piece : def.pieces) {
+            out += "        {\n            Piece p;\n";
+            out += QString("            p.kind = Piece::%1;\n")
+                       .arg(piece.kind == Piece::SINGLE ? "SINGLE" : "REPETITION");
+            if (piece.kind == Piece::REPETITION) {
+                out += QString("            p.zeroOrMore = %1;\n")
+                           .arg(piece.zeroOrMore ? "true" : "false");
+            }
+            for (const auto& alt : piece.element.alternatives) {
+                out += QString("            p.element.alternatives.push_back(%1);\n")
+                           .arg(cppParaAlternativa(alt));
+            }
+            out += "            def.pieces.push_back(p);\n        }\n";
+        }
+    }
+    out += "        defs.push_back(def);\n    }\n";
+    return out;
+}
+
+QString MainWindow::generarCodigoCpp() const {
+    QString cuerpo;
+    for (const auto& def : tokenDefs) {
+        cuerpo += generarBloqueTokenDef(def);
+    }
+
+    QString plantilla = R"CPP(// Analizador lexico generado automaticamente.
+// Generado: %1
+// No depende de Qt: compila con cualquier compilador C++17, por ejemplo:
+//   g++ -std=c++17 analizador_generado.cpp -o analizador
+//   ./analizador
+
+#include <string>
+#include <vector>
+#include <iostream>
+#include <cctype>
+#include <utility>
+
+struct Alternative {
+    enum Kind { UPPERCASE, LOWERCASE, DIGIT, SYMBOL };
+    Kind kind = UPPERCASE;
+    std::string symbolLiteral;
+    std::string symbolName;
+};
+
+struct Element {
+    std::vector<Alternative> alternatives;
+};
+
+struct Piece {
+    enum Kind { SINGLE, REPETITION };
+    Kind kind = SINGLE;
+    Element element;
+    bool zeroOrMore = true;
+};
+
+struct TokenDef {
+    std::string name;
+    bool isKeyword = false;
+    std::string keywordLiteral;
+    std::vector<Piece> pieces;
+};
+
+class Token {
+public:
+    enum class Kind { MATCH, ERR, END };
+    Kind kind;
+    std::string lexeme;
+    std::string tokenName;
+    explicit Token(Kind k, std::string lex = "", std::string name = "")
+        : kind(k), lexeme(std::move(lex)), tokenName(std::move(name)) {}
+};
+
+class Scanner {
+public:
+    Scanner(const std::string& in, const std::vector<TokenDef>& d)
+        : input(in), defs(d), current(0) {}
+
+    Token nextToken() {
+        while (current < input.size() && esBlanco(input[current])) current++;
+        if (current >= input.size()) return Token(Token::Kind::END);
+
+        size_t first = current;
+        int bestLen = -1;
+        const TokenDef* bestDef = nullptr;
+
+        for (const auto& def : defs) {
+            if (def.isKeyword) continue;
+            int len = matchTokenDef(def, first);
+            if (len > bestLen) { bestLen = len; bestDef = &def; }
+        }
+
+        if (bestLen <= 0) {
+            current++;
+            return Token(Token::Kind::ERR, std::string(1, input[first]));
+        }
+
+        std::string lexeme = input.substr(first, (size_t)bestLen);
+        current = first + (size_t)bestLen;
+
+        for (const auto& def : defs) {
+            if (def.isKeyword && def.keywordLiteral == lexeme)
+                return Token(Token::Kind::MATCH, lexeme, def.name);
+        }
+        return Token(Token::Kind::MATCH, lexeme, bestDef->name);
+    }
+
+private:
+    std::string input;
+    const std::vector<TokenDef>& defs;
+    size_t current;
+
+    static bool esBlanco(char c) { return c==' '||c=='\n'||c=='\r'||c=='\t'; }
+
+    int matchElement(const Element& elem, size_t pos) const {
+        if (pos >= input.size()) return -1;
+        unsigned char c = (unsigned char)input[pos];
+        for (const auto& alt : elem.alternatives) {
+            switch (alt.kind) {
+                case Alternative::UPPERCASE: if (std::isupper(c)) return 1; break;
+                case Alternative::LOWERCASE: if (std::islower(c)) return 1; break;
+                case Alternative::DIGIT:     if (std::isdigit(c)) return 1; break;
+                case Alternative::SYMBOL: {
+                    size_t len = alt.symbolLiteral.size();
+                    if (len > 0 && input.compare(pos, len, alt.symbolLiteral) == 0) return (int)len;
+                    break;
+                }
+            }
+        }
+        return -1;
+    }
+
+    int matchPiece(const Piece& piece, size_t pos) const {
+        if (piece.kind == Piece::SINGLE) return matchElement(piece.element, pos);
+        size_t cur = pos; int count = 0;
+        while (true) {
+            int len = matchElement(piece.element, cur);
+            if (len < 0) break;
+            cur += (size_t)len; count++;
+        }
+        if (!piece.zeroOrMore && count == 0) return -1;
+        return (int)(cur - pos);
+    }
+
+    int matchTokenDef(const TokenDef& def, size_t pos) const {
+        if (def.isKeyword) {
+            size_t len = def.keywordLiteral.size();
+            if (len > 0 && input.compare(pos, len, def.keywordLiteral) == 0) return (int)len;
+            return -1;
+        }
+        size_t cur = pos;
+        for (const auto& piece : def.pieces) {
+            int len = matchPiece(piece, cur);
+            if (len < 0) return -1;
+            cur += (size_t)len;
+        }
+        if (cur == pos) return -1;
+        return (int)(cur - pos);
+    }
+};
+
+// ---------- Definiciones de token (generadas desde el GUI) ----------
+static std::vector<TokenDef> construirDefiniciones() {
+    std::vector<TokenDef> defs;
+%2
+    return defs;
+}
+
+int main() {
+    std::vector<TokenDef> defs = construirDefiniciones();
+
+    std::cout << "Escribe una cadena para escanear:\n";
+    std::string entrada;
+    std::getline(std::cin, entrada);
+
+    Scanner sc(entrada, defs);
+    Token t = sc.nextToken();
+    while (t.kind != Token::Kind::END) {
+        if (t.kind == Token::Kind::ERR)
+            std::cout << "ERROR\tcaracter='" << t.lexeme << "'\n";
+        else
+            std::cout << t.tokenName << "\tlexema='" << t.lexeme << "'\n";
+        t = sc.nextToken();
+    }
+    return 0;
+}
+)CPP";
+
+    return plantilla.arg(QDateTime::currentDateTime().toString(Qt::ISODate), cuerpo);
+}
+
+void MainWindow::generarCodigo() {
+    if (tokenDefs.empty()) {
+        QMessageBox::warning(this, "Sin tokens", "Define al menos un token antes de generar el codigo.");
+        return;
+    }
+    QString ruta = QFileDialog::getSaveFileName(this, "Guardar analizador generado",
+                                                 "analizador_generado.cpp", "Codigo C++ (*.cpp)");
+    if (ruta.isEmpty()) return;
+
+    QFile archivo(ruta);
+    if (!archivo.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, "Error", "No se pudo guardar el archivo.");
+        return;
+    }
+    QTextStream out(&archivo);
+    out << generarCodigoCpp();
+    archivo.close();
+
+    QMessageBox::information(this, "Codigo generado",
+        "Se genero el archivo:\n" + ruta +
+        "\n\nCompila con:\ng++ -std=c++17 \"" + ruta + "\" -o analizador");
 }
